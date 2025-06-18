@@ -14,6 +14,7 @@ import copy
 import genebe as gnb
 from pathlib import Path
 import obonet
+import time
 
 
 parts = []
@@ -128,8 +129,8 @@ if "phenotype_paper_matches" not in st.session_state:
     st.session_state.phenotype_paper_matches = {}
 if "gene_phenotype_counts" not in st.session_state:
     st.session_state.gene_phenotype_counts = {}
-if 'last_uploaded_filename' not in st.session_state:
-    st.session_state.last_uploaded_filename = ""
+if 'last_vcf_filename' not in st.session_state: 
+    st.session_state.last_vcf_filename = ""
 if "file_processed" not in st.session_state:
     st.session_state.file_processed = False
 if "phenotypes" not in st.session_state:
@@ -220,6 +221,46 @@ graph = obonet.read_obo('http://purl.obolibrary.org/obo/hp.obo')
 def get_hpo_name(hpo_id):
     node = graph.nodes.get(hpo_id)
     return node.get('name') if node else None
+
+def send_to_exomiser(vcf_file, genome_assembly, proband, ped_file=None):
+    """Send files to a remote Exomiser service and return HTML output."""
+    files = {"vcf": vcf_file.getvalue()}
+    if ped_file is not None:
+        files["ped"] = ped_file.getvalue()
+        data = {"proband": proband, "genomeAssembly": genome_assembly}
+        
+# Submit job
+ resp = requests.post("https://your-cloud-service/run-exomiser", files=files, data=data)
+    if resp.status_code != 200:
+       st.error("Failed to submit Exomiser job")
+        return None
+    
+    job_id = resp.json().get("job_id")
+if not job_id
+st.error("No job ID returned from Exomiser service")
+    return None
+  
+        status = "pending"
+        html_result = None
+        while status not in {"complete", "failed"}:
+            time.sleep(5)
+            poll = requests.get(f"https://your-cloud-service/job-status/{job_id}")
+            if poll.status_code != 200:
+                continue
+
+	
+        status = poll.json().get("status")
+        if status == "complete":
+            download = requests.get(f"https://your-cloud-service/job-result/{job_id}")
+            if download.status_code == 200:
+                html_result = download.text
+            else:
+                st.error("Failed to download Exomiser result")
+        break
+    elif status == "failed":
+        st.error("Exomiser job failed")
+        break
+return html_result 
 
 def on_variant_select():
     # This function intentionally left empty - it's just to capture the callback
@@ -830,7 +871,11 @@ manual_phenotypes = [p.strip() for p in user_input_ph.split('\n') if p.strip()]
 # Limit to 20 phenotypes
 manual_phenotypes = manual_phenotypes[:20]
 
-uploaded_file = st.file_uploader("Upload Exomiser HTML file", type=["vcf", "txt", "json", "html"])
+proband = st.text_input("Proband ID")
+genome_assembly = st.selectbox("Genome Assembly", ["hg19", "hg38"]) 
+vcf_file = st.file_uploader("Upload VCF file", type=["vcf"]) 
+ped_file = st.file_uploader("Optional PED file", type=["ped", "txt"], key="ped_file") 
+
 
 # Initialize file variants and phenotypes in session state if not exists
 if 'file_variants' not in st.session_state:
@@ -839,23 +884,24 @@ if 'file_phenotypes' not in st.session_state:
     st.session_state.file_phenotypes = []
 
 # Check if file was removed or changed
-current_filename = uploaded_file.name if uploaded_file is not None else None
-last_filename = st.session_state.get("last_uploaded_filename", None)
+current_filename = vcf_file.name if vcf_file is not None else None 
+last_filename = st.session_state.get("last_vcf_filename", None) 
 
 # Reset file data if file was removed or changed
 if current_filename != last_filename:
     st.session_state.file_variants = []
     st.session_state.file_phenotypes = []
     st.session_state.file_processed = False
-    st.session_state.last_uploaded_filename = current_filename
+     st.session_state.last_vcf_filename = current_filename
 
 # Only process if it's a NEW file or if no processing has been done yet
-if (uploaded_file is not None and not st.session_state.get("file_processed", False)):
-    # New file uploaded — process it
+if (vcf_file is not None and not st.session_state.get("file_processed", False)): 
     st.session_state.file_processed = True
-    
     try:
-        html_content = uploaded_file.read().decode("utf-8")
+        html_content = send_to_exomiser(vcf_file, genome_assembly, proband, ped_file) 
+         if not html_content:
+             raise ValueError("No output returned from Exomiser service") 
+             
         st.session_state.file_variants = extract_variants_with_regex(html_content)
         hpo_ids = extract_hpo_ids(html_content)
         
