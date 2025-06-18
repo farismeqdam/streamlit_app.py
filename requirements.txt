@@ -5,3 +5,5 @@ setuptools
 genebe
 cyvcf2
 obonet
+fastapi
+uvicorn
